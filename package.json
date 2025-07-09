@@ -1,0 +1,95 @@
+{
+  "name": "better-auth-qr-plugin",
+  "version": "0.0.1",
+  "description": "QR code authentication plugin for Better Auth",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./native": {
+      "types": "./dist/clients/native.d.ts",
+      "import": "./dist/clients/native.js",
+      "require": "./dist/clients/native.js",
+      "default": "./dist/clients/native.js"
+    },
+    "./web": {
+      "types": "./dist/clients/web.d.ts",
+      "import": "./dist/clients/web.js",
+      "require": "./dist/clients/web.js",
+      "default": "./dist/clients/web.js"
+    },
+    "./clients/native": {
+      "types": "./dist/clients/native.d.ts",
+      "import": "./dist/clients/native.js",
+      "require": "./dist/clients/native.js",
+      "default": "./dist/clients/native.js"
+    },
+    "./clients/web": {
+      "types": "./dist/clients/web.d.ts",
+      "import": "./dist/clients/web.js",
+      "require": "./dist/clients/web.js",
+      "default": "./dist/clients/web.js"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "native": ["./dist/clients/native.d.ts"],
+      "web": ["./dist/clients/web.d.ts"],
+      "clients/native": ["./dist/clients/native.d.ts"],
+      "clients/web": ["./dist/clients/web.d.ts"]
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "bun test",
+    "lint": "eslint src/**/*.ts",
+    "type-check": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "keywords": [
+    "better-auth",
+    "qr-code",
+    "authentication",
+    "plugin",
+    "typescript",
+    "bun"
+  ],
+  "author": "Alex San Luis",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codelab-io/better-auth-qr-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/codelab-io/better-auth-qr-plugin/issues"
+  },
+  "homepage": "https://github.com/codelab-io/better-auth-qr-plugin#readme",
+  "dependencies": {
+    "qrcode": "^1.5.3",
+    "uuid": "^10.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/qrcode": "^1.5.5",
+    "@types/uuid": "^10.0.0",
+    "bun-types": "latest",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "better-auth": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
