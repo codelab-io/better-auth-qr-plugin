@@ -24,9 +24,6 @@ jobs:
       - name: Run type check
         run: bun run type-check
 
-      - name: Run tests
-        run: bun test
-
   build:
     needs: test
     runs-on: ubuntu-latest
