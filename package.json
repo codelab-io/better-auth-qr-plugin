@@ -1,6 +1,6 @@
 {
   "name": "better-auth-qr-plugin",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "QR code authentication plugin for Better Auth",
   "type": "module",
   "main": "./dist/index.js",
