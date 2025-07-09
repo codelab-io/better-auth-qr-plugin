@@ -59,9 +59,9 @@
   },
   "keywords": [
     "better-auth",
+    "plugin",
     "qr-code",
     "authentication",
-    "plugin",
     "typescript",
     "bun"
   ],
