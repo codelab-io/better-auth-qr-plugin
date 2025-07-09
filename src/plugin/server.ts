@@ -5,18 +5,43 @@ import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import QRCode from "qrcode";
 
+/**
+ * Configuration schema for QR Authentication plugin
+ */
 const qrAuthConfigSchema = z.object({
-  tokenExpirationMinutes: z.number().default(5),
-  qrCodeSize: z.number().default(256),
+  /**
+   * Token expiration time in minutes
+   * @default 5
+   */
+  tokenExpirationMinutes: z.number().min(1).max(60).default(5),
+  /**
+   * QR code image size in pixels
+   * @default 256
+   */
+  qrCodeSize: z.number().min(128).max(512).default(256),
+  /**
+   * Custom endpoint paths
+   */
   endpoints: z.object({
     generateToken: z.string().default("/qr/generate"),
     verifyToken: z.string().default("/qr/verify"),
     pollStatus: z.string().default("/qr/status"),
+    claimSession: z.string().default("/qr/claim-session"),
   }).default({}),
 });
 
+export type QRAuthConfig = z.infer<typeof qrAuthConfigSchema>;
 type QRAuthConfigInput = z.input<typeof qrAuthConfigSchema>;
 
+/**
+ * Better Auth QR Authentication Plugin
+ * 
+ * Enables QR code-based authentication between web and mobile applications.
+ * Provides secure two-step authentication flow with session token exchange.
+ * 
+ * @param config - Plugin configuration options
+ * @returns BetterAuthPlugin instance
+ */
 export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
   const parsedConfig = qrAuthConfigSchema.parse(config || {});
   
@@ -40,6 +65,8 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
             }
           },
           verifiedAt: { type: "date", required: false },
+          sessionCreationToken: { type: "string", required: false },
+          sessionCreationTokenExpiresAt: { type: "date", required: false },
         },
         modelName: "qrToken"
       }
@@ -67,16 +94,17 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
               expiresAt,
               isUsed: false,
             },
+            forceAllowId: true,
           });
           
-          // Create QR code data
-          const qrData = JSON.stringify({
+          // Create QR code data with JSON object
+          const qrDataObject = {
             tokenId,
             token,
             serverUrl: ctx.context.baseURL,
-          });
+          };
           
-          const qrCodeDataUrl = await QRCode.toDataURL(qrData, {
+          const qrCodeDataUrl = await QRCode.toDataURL(JSON.stringify(qrDataObject), {
             width: parsedConfig.qrCodeSize,
             margin: 2,
           });
@@ -99,17 +127,16 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
           use: [sessionMiddleware],
         },
         async (ctx) => {
-          const body = await ctx.request?.json();
-          const { tokenId, token } = body;
+          const { tokenId, token } = ctx.body;
           
           if (!tokenId || !token) {
-            return ctx.json({ success: false, error: "Token ID and token are required" }, { status: 400 });
+            return ctx.json({ error: "Token ID and token are required" }, { status: 400 });
           }
           
           // Get current session (mobile user)
           const session = ctx.context.session;
           if (!session || !session.user) {
-            return ctx.json({ success: false, error: "No authenticated user" }, { status: 401 });
+            return ctx.json({ error: "No authenticated user" }, { status: 401 });
           }
           
           // Find QR token in database
@@ -123,11 +150,11 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
           }) as any;
           
           if (!qrToken) {
-            return ctx.json({ success: false, error: "Token not found" }, { status: 404 });
+            return ctx.json({ error: "Token not found" }, { status: 404 });
           }
           
           if (qrToken.token !== token) {
-            return ctx.json({ success: false, error: "Invalid token" }, { status: 401 });
+            return ctx.json({ error: "Invalid token" }, { status: 401 });
           }
           
           if (new Date(qrToken.expiresAt) < new Date()) {
@@ -140,46 +167,39 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
                 operator: 'eq'
               }],
             });
-            return ctx.json({ success: false, error: "Token expired" }, { status: 410 });
+            return ctx.json({ error: "Token expired" }, { status: 410 });
           }
           
           if (qrToken.isUsed) {
-            return ctx.json({ success: false, error: "Token already used" }, { status: 409 });
+            return ctx.json({ error: "Token already used" }, { status: 409 });
           }
           
-          // Mark token as used and associate with user
+          // Create session creation token for secure claim process
+          const sessionCreationToken = uuidv4();
+          const sessionCreationTokenExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+          
+          // Mark token as used and associate with user, store session creation token
           await ctx.context.adapter.update({
             model: "qrToken",
             where: [{
-            field: "id",
-            value: tokenId,
-            operator: 'eq'
-          }],
+              field: "id",
+              value: tokenId,
+              operator: 'eq'
+            }],
             update: {
               isUsed: true,
               userId: session.user.id,
               verifiedAt: new Date(),
+              sessionCreationToken,
+              sessionCreationTokenExpiresAt,
             },
           });
           
-          // Create a new session for the web client  
-          const sessionToken = uuidv4();
-          const newSession = {
-            id: uuidv4(),
-            token: sessionToken,
-            userId: session.user.id,
-            expiresAt: new Date(Date.now() + (30 * 24 * 60 * 60 * 1000)),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          };
-          
           return ctx.json({
-            success: true,
-            data: {
-              userId: session.user.id,
-              sessionToken: newSession.token,
-              user: session.user,
-            },
+            userId: session.user.id,
+            user: session.user,
+            sessionCreationToken,
+            sessionCreationTokenExpiresAt: sessionCreationTokenExpiresAt.toISOString(),
           });
         }
       ),
@@ -194,7 +214,7 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
           const tokenId = url.searchParams.get('tokenId');
           
           if (!tokenId) {
-            return ctx.json({ success: false, error: "Token ID required" }, { status: 400 });
+            return ctx.json({ error: "Token ID required" }, { status: 400 });
           }
           
           const qrToken = await ctx.context.adapter.findOne({
@@ -207,7 +227,7 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
           }) as any;
           
           if (!qrToken) {
-            return ctx.json({ success: false, error: "Token not found" }, { status: 404 });
+            return ctx.json({ error: "Token not found" }, { status: 404 });
           }
           
           // Check if token is expired
@@ -221,19 +241,160 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
                 operator: 'eq'
               }],
             });
-            return ctx.json({ success: false, error: "Token expired" }, { status: 410 });
+            return ctx.json({ error: "Token expired" }, { status: 410 });
+          }
+          
+          // If completed, return session creation token for secure claiming
+          if (qrToken.isUsed) {
+            // Get user data
+            const user = await ctx.context.adapter.findOne({
+              model: "user",
+              where: [{
+                field: "id",
+                value: qrToken.userId,
+                operator: 'eq'
+              }],
+            });
+            
+            if (user && qrToken.sessionCreationToken) {
+              // Check if session creation token is not expired
+              if (new Date(qrToken.sessionCreationTokenExpiresAt) > new Date()) {
+                return ctx.json({
+                  status: "completed",
+                  userId: qrToken.userId,
+                  user: user,
+                  sessionCreationToken: qrToken.sessionCreationToken,
+                  verifiedAt: qrToken.verifiedAt ? new Date(qrToken.verifiedAt).toISOString() : null,
+                  expiresAt: new Date(qrToken.expiresAt).toISOString(),
+                });
+              }
+            }
           }
           
           return ctx.json({
-            success: true,
-            data: {
-              status: qrToken.isUsed ? "completed" : "pending",
-              userId: qrToken.userId,
-              user: qrToken.user,
-              verifiedAt: qrToken.verifiedAt?.toISOString(),
-              expiresAt: qrToken.expiresAt.toISOString(),
-            },
+            status: qrToken.isUsed ? "completed" : "pending",
+            userId: qrToken.userId,
+            user: qrToken.user,
+            verifiedAt: qrToken.verifiedAt ? new Date(qrToken.verifiedAt).toISOString() : null,
+            expiresAt: new Date(qrToken.expiresAt).toISOString(),
           });
+        }
+      ),
+      
+      [parsedConfig.endpoints.claimSession]: createAuthEndpoint(
+        parsedConfig.endpoints.claimSession,
+        {
+          method: "POST",
+        },
+        async (ctx) => {
+          const { sessionCreationToken } = ctx.body;
+          
+          if (!sessionCreationToken) {
+            return ctx.json({ error: "Session creation token is required" }, { status: 400 });
+          }
+          
+          // Find QR token with the session creation token
+          const qrToken = await ctx.context.adapter.findOne({
+            model: "qrToken",
+            where: [{
+              field: "sessionCreationToken",
+              value: sessionCreationToken,
+              operator: 'eq'
+            }],
+          }) as any;
+          
+          if (!qrToken) {
+            return ctx.json({ error: "Invalid session creation token" }, { status: 404 });
+          }
+          
+          if (!qrToken.isUsed || !qrToken.userId) {
+            return ctx.json({ error: "QR token not properly verified" }, { status: 400 });
+          }
+          
+          // Check if session creation token is expired
+          const tokenExpiresAt = new Date(qrToken.sessionCreationTokenExpiresAt);
+          const now = new Date();
+          
+          if (tokenExpiresAt <= now) {
+            return ctx.json({ error: "Session creation token expired" }, { status: 410 });
+          }
+          
+          // Get user data
+          const user = await ctx.context.adapter.findOne({
+            model: "user",
+            where: [{
+              field: "id",
+              value: qrToken.userId,
+              operator: 'eq'
+            }],
+          });
+          
+          if (!user) {
+            return ctx.json({ error: "User not found" }, { status: 404 });
+          }
+          
+          // Create a new independent session for the web client
+          try {
+            const sessionToken = await ctx.context.internalAdapter.createSession(
+              qrToken.userId,
+              ctx
+            );
+            
+            if (!sessionToken) {
+              return ctx.json({ error: "Failed to create session" }, { status: 500 });
+            }
+            
+            // Set the session cookie for the web client
+            const cookieName = "better-auth.session_token";
+            
+            // Determine if we're in a secure context
+            const isLocalhost = ctx.context.baseURL.includes('localhost') || 
+                               ctx.context.baseURL.includes('127.0.0.1') ||
+                               ctx.context.baseURL.startsWith('http://');
+            
+            const cookieOptions = {
+              httpOnly: true,
+              secure: !isLocalhost, // false for localhost, true for production
+              sameSite: isLocalhost ? "lax" as const : "strict" as const,
+              path: "/",
+              maxAge: 60 * 60 * 24 * 7, // 7 days
+            };
+            
+            await ctx.setSignedCookie(
+              cookieName,
+              sessionToken.token,
+              ctx.context.secret,
+              cookieOptions
+            );
+            
+            // Clear the session creation token to prevent reuse
+            await ctx.context.adapter.update({
+              model: "qrToken",
+              where: [{
+                field: "sessionCreationToken",
+                value: sessionCreationToken,
+                operator: 'eq'
+              }],
+              update: {
+                sessionCreationToken: null,
+                sessionCreationTokenExpiresAt: null,
+              },
+            });
+            
+            return ctx.json({
+              success: true,
+              userId: qrToken.userId,
+              user: user,
+              sessionToken: sessionToken.token,
+              expiresAt: sessionToken.expiresAt instanceof Date ? sessionToken.expiresAt.toISOString() : sessionToken.expiresAt,
+            });
+            
+          } catch (error) {
+            return ctx.json({ 
+              error: "Failed to create session: " + (error instanceof Error ? error.message : 'Unknown error') 
+            }, { status: 500 });
+          }
+          
         }
       ),
     },
@@ -241,12 +402,9 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
     hooks: {
       after: [
         {
-          matcher: (context) => {
-            return context.path === parsedConfig.endpoints.verifyToken;
-          },
+          matcher: (context) => context.path === parsedConfig.endpoints.verifyToken,
           handler: async (ctx) => {
-            // Could emit events here for real-time updates
-            // This would integrate with WebSocket/SSE solutions
+            // Hook for real-time updates integration (WebSocket/SSE)
             return ctx;
           },
         },

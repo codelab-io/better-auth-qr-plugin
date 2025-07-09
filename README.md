@@ -14,6 +14,8 @@ A Better Auth plugin that enables QR code-based authentication for seamless mobi
 - 🌐 **Framework Agnostic** - Web client works with any web framework
 - 🔄 **Unified Interface** - Same API across all platforms
 - 🚧 **Guard Rails** - Platform-specific imports prevent environment issues
+- 🔐 **Independent Sessions** - Each device gets its own separate authentication session
+- 🛡️ **Secure Two-Step Flow** - Uses sessionCreationToken for secure cross-device authentication
 
 ## Architecture
 
@@ -24,6 +26,24 @@ This plugin provides a unified interface across three components:
 3. **Native Client** - Better Auth client plugin optimized for React Native
 
 **All clients share the same interface and functionality**, allowing any platform to both generate and scan QR codes.
+
+## Security Architecture
+
+This plugin implements a **secure two-step authentication flow** for independent sessions:
+
+1. **QR Generation**: Web client generates QR code containing tokenId + token + serverUrl
+2. **Mobile Verification**: Authenticated mobile user scans QR and verifies with server
+3. **Session Token Creation**: Server creates a sessionCreationToken (not a full session)
+4. **Secure Polling**: Web client polls and receives the sessionCreationToken
+5. **Session Claiming**: Web client uses sessionCreationToken to claim its own independent session
+
+**Key Security Features:**
+- ✅ **Independent Sessions**: Mobile and web devices maintain separate authentication sessions
+- ✅ **No Session Sharing**: Each device has its own session, preventing security issues
+- ✅ **Secure Token Exchange**: Uses sessionCreationToken for secure handoff between devices
+- ✅ **Time-Limited Tokens**: sessionCreationToken expires in 5 minutes
+- ✅ **One-Time Use**: Tokens are consumed after successful session creation
+- ✅ **No Unauthenticated Session Creation**: Polling endpoint doesn't create sessions directly
 
 ## Installation
 
@@ -133,19 +153,43 @@ const scanResult = await authClient.qrAuth.handleQRCodeScan(scannedData);
 
 ## Authentication Flows
 
-The unified interface supports multiple authentication patterns:
+The unified interface supports multiple authentication patterns with **independent sessions**:
 
-### 1. Web-to-Mobile Pattern
+### 1. Web-to-Mobile Pattern (Most Common)
 1. **Web app** generates QR code using `startQRAuth()`
-2. **Mobile user** scans QR code using `handleQRCodeScan()`
-3. **Web app** receives authentication confirmation
-4. **Mobile user** authenticates the web session
+2. **Authenticated mobile user** scans QR code using `handleQRCodeScan()`
+3. **Server** creates sessionCreationToken (not full session)
+4. **Web app** automatically receives sessionCreationToken via polling
+5. **Web app** automatically calls `claimSession()` to get independent session
+6. **Both devices** now have separate, independent authentication sessions
 
 ### 2. Mobile-to-Mobile Pattern
 1. **Mobile app A** generates QR code using `startQRAuth()`
-2. **Mobile app B** scans QR code using `handleQRCodeScan()`
-3. **Mobile app A** receives authentication confirmation
-4. Cross-device mobile authentication
+2. **Authenticated mobile app B** scans QR code using `handleQRCodeScan()`
+3. **Server** creates sessionCreationToken for mobile app A
+4. **Mobile app A** automatically receives sessionCreationToken via polling
+5. **Mobile app A** automatically calls `claimSession()` to get independent session
+6. **Both mobile devices** now have separate, independent authentication sessions
+
+### 3. Secure Two-Step Flow Details
+
+```typescript
+// Step 1: Web client starts auth flow
+const result = await authClient.qrAuth.startQRAuth({
+  onQRGenerated: (qrCode) => {
+    // Display QR code for mobile user to scan
+  },
+  onSuccess: (sessionData) => {
+    // Web client now has independent session!
+    // Mobile user's session remains separate
+  }
+});
+
+// Step 2: Mobile user scans (mobile stays authenticated)
+const scanResult = await authClient.qrAuth.handleQRCodeScan(qrData);
+// Mobile user keeps their existing session
+// Web client gets a new, independent session
+```
 
 ## API Reference
 
@@ -159,6 +203,7 @@ qrAuth({
     generateToken?: string; // Default: "/qr/generate"
     verifyToken?: string;   // Default: "/qr/verify"
     pollStatus?: string;    // Default: "/qr/status"
+    claimSession?: string;  // Default: "/qr/claim-session"
   };
 })
 ```
@@ -176,6 +221,7 @@ qrAuthClient({
     generateToken?: string; // Default: "/qr/generate"
     verifyToken?: string;   // Default: "/qr/verify"
     pollStatus?: string;    // Default: "/qr/status"
+    claimSession?: string;  // Default: "/qr/claim-session"
   };
 })
 ```
@@ -267,6 +313,21 @@ Manually poll authentication status:
 ```typescript
 const result = await authClient.qrAuth.pollStatus(tokenId);
 console.log('Status:', result.data?.status); // 'pending' | 'completed'
+```
+
+#### `claimSession(sessionCreationToken, fetchOptions?)`
+
+Claim an independent session using a sessionCreationToken:
+
+```typescript
+const result = await authClient.qrAuth.claimSession(sessionCreationToken);
+
+if (result.data) {
+  console.log('Session claimed successfully:', result.data);
+  // You now have an independent session on this device
+} else {
+  console.error('Session claim failed:', result.error);
+}
 ```
 
 ## Framework Examples
@@ -465,6 +526,12 @@ const styles = StyleSheet.create({
 
 ## Security Considerations
 
+- **Independent Sessions**: Each device gets its own separate authentication session
+- **Secure Token Exchange**: Uses sessionCreationToken for secure handoff between devices
+- **No Session Sharing**: Mobile and web sessions are completely independent
+- **Time-Limited Tokens**: sessionCreationToken expires in 5 minutes for security
+- **One-Time Use**: Session creation tokens are consumed after successful use
+- **No Unauthenticated Session Creation**: Polling endpoint doesn't create sessions directly
 - **Token Expiration**: Configure appropriate expiration times for your use case
 - **Rate Limiting**: The plugin includes built-in rate limiting (10 requests per minute)
 - **HTTPS Only**: Always use HTTPS in production
@@ -527,7 +594,9 @@ CREATE TABLE qrToken (
   expiresAt DATETIME NOT NULL,
   isUsed BOOLEAN NOT NULL DEFAULT FALSE,
   userId TEXT REFERENCES user(id),
-  verifiedAt DATETIME
+  verifiedAt DATETIME,
+  sessionCreationToken TEXT,
+  sessionCreationTokenExpiresAt DATETIME
 );
 ```
 

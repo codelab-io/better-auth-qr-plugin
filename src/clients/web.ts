@@ -8,47 +8,11 @@
 import type { BetterAuthClientPlugin } from "better-auth/client";
 import type { BetterFetchOption } from "@better-fetch/fetch";
 import type { qrAuth } from "../plugin/server.js";
-
-export interface QRCodeData {
-  tokenId: string;
-  token: string;
-  serverUrl: string;
-}
-
-export interface QRAuthStartOptions {
-  pollInterval?: number;
-  onQRGenerated?: (qrCode: string, tokenId: string) => void;
-  onSuccess?: (sessionData: any) => void;
-  onError?: (error: string) => void;
-}
-
-export interface QRClientConfig {
-  /**
-   * Custom headers to include with requests
-   */
-  headers?: Record<string, string>;
-  
-  /**
-   * Request timeout in milliseconds
-   * @default 10000
-   */
-  timeout?: number;
-  
-  /**
-   * Polling interval in milliseconds for QR status
-   * @default 2000
-   */
-  pollInterval?: number;
-  
-  /**
-   * Custom endpoint paths
-   */
-  endpoints?: {
-    generateToken?: string;
-    verifyToken?: string;
-    pollStatus?: string;
-  };
-}
+import type { 
+  QRCodeData, 
+  QRAuthStartOptions, 
+  QRClientConfig 
+} from "../types/index.js";
 
 /**
  * Better Auth QR client plugin for Web/Browser
@@ -59,6 +23,7 @@ export const qrAuthClient = (config?: QRClientConfig) => {
     generateToken: "/qr/generate",
     verifyToken: "/qr/verify", 
     pollStatus: "/qr/status",
+    claimSession: "/qr/claim-session",
     ...config?.endpoints
   };
 
@@ -70,10 +35,11 @@ export const qrAuthClient = (config?: QRClientConfig) => {
       [defaultEndpoints.generateToken]: "POST",
       [defaultEndpoints.verifyToken]: "POST",
       [defaultEndpoints.pollStatus]: "GET",
+      [defaultEndpoints.claimSession]: "POST",
     },
     
-    getActions: ($fetch: any) => {
-      const actions = {
+    getActions: ($fetch: any, ctx: any) => ({
+      qrAuth: {
         /**
          * Start QR authentication flow (for displaying QR codes)
          */
@@ -93,11 +59,16 @@ export const qrAuthClient = (config?: QRClientConfig) => {
               ...fetchOptions
             });
             
-            if (!qrResponse.data) {
-              throw new Error(qrResponse.error || "Failed to generate QR code");
+            // Handle both direct response and wrapped response formats
+            const responseData = qrResponse.data || qrResponse;
+            
+            if (!responseData || (!responseData.tokenId && !responseData.data)) {
+              throw new Error(qrResponse.error || responseData?.error || "Failed to generate QR code");
             }
             
-            const { tokenId, qrCode, expiresAt } = qrResponse.data;
+            // Extract data from nested structure if needed
+            const actualData = responseData.data || responseData;
+            const { tokenId, qrCode, expiresAt } = actualData;
             options?.onQRGenerated?.(qrCode, tokenId);
             
             // Start polling for status
@@ -114,9 +85,37 @@ export const qrAuthClient = (config?: QRClientConfig) => {
                   ...fetchOptions
                 });
                 
-                if (statusResponse.data?.status === "completed") {
+                // Handle both direct response and nested .data response
+                const responseData = statusResponse.data || statusResponse;
+                
+                if (responseData?.status === "completed" && responseData?.sessionCreationToken) {
                   clearInterval(pollInterval);
-                  options?.onSuccess?.(statusResponse.data);
+                  
+                  try {
+                    // Step 2: Claim the session with the sessionCreationToken
+                    const claimResponse = await $fetch(defaultEndpoints.claimSession, {
+                      method: "POST",
+                      body: JSON.stringify({
+                        sessionCreationToken: responseData.sessionCreationToken
+                      }),
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'X-Client-Type': 'web',
+                        ...(config?.headers || {}),
+                        ...(fetchOptions?.headers || {})
+                      },
+                      ...fetchOptions
+                    });
+                    
+                    if (claimResponse.error) {
+                      options?.onError?.(claimResponse.error);
+                    } else {
+                      options?.onSuccess?.(claimResponse.data || claimResponse);
+                    }
+                  } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : "Failed to claim session";
+                    options?.onError?.(errorMessage);
+                  }
                 }
               } catch (error) {
                 clearInterval(pollInterval);
@@ -152,14 +151,15 @@ export const qrAuthClient = (config?: QRClientConfig) => {
         },
 
         /**
-         * Parse QR code data from scanned string
+         * Parse QR code data from scanned string (base64 encoded like WhatsApp)
          */
         parseQRCode: (qrCodeValue: string) => {
           try {
+            // Parse JSON directly
             const parsed = JSON.parse(qrCodeValue);
             
             if (!parsed.tokenId || !parsed.token || !parsed.serverUrl) {
-              throw new Error('Invalid QR code format');
+              throw new Error('Invalid QR code data structure');
             }
 
             return {
@@ -184,7 +184,7 @@ export const qrAuthClient = (config?: QRClientConfig) => {
           try {
             const requestOptions: any = {
               method: "POST",
-              body: data,
+              body: JSON.stringify(data),
               headers: {
                 'Content-Type': 'application/json',
                 'X-Client-Type': 'web',
@@ -228,20 +228,35 @@ export const qrAuthClient = (config?: QRClientConfig) => {
           fetchOptions?: BetterFetchOption
         ) => {
           try {
-            // Parse QR code
-            const parsed = JSON.parse(qrCodeValue);
+            // Parse the QR code string first
+            const parseResult = (() => {
+              try {
+                const parsed = JSON.parse(qrCodeValue);
+                if (!parsed.tokenId || !parsed.token) {
+                  throw new Error('Invalid QR code data structure');
+                }
+                return { data: parsed as QRCodeData, error: null };
+              } catch (error) {
+                return {
+                  data: null,
+                  error: error instanceof Error ? error.message : 'Failed to parse QR code data'
+                };
+              }
+            })();
             
-            if (!parsed.tokenId || !parsed.token || !parsed.serverUrl) {
+            if (parseResult.error || !parseResult.data) {
               return {
                 data: null,
-                error: 'Invalid QR code format. Missing required fields.'
+                error: parseResult.error || 'Failed to parse QR code'
               };
             }
-
+            
+            const { tokenId, token } = parseResult.data;
+            
             // Verify with server
             const requestOptions: any = {
               method: "POST",
-              body: { tokenId: parsed.tokenId, token: parsed.token },
+              body: JSON.stringify({ tokenId, token }),
               headers: {
                 'Content-Type': 'application/json',
                 'X-Client-Type': 'web',
@@ -308,10 +323,42 @@ export const qrAuthClient = (config?: QRClientConfig) => {
               error: error instanceof Error ? error.message : "Status polling failed"
             };
           }
+        },
+        
+        /**
+         * Claim session using sessionCreationToken (second step of secure flow)
+         */
+        claimSession: async (
+          sessionCreationToken: string,
+          fetchOptions?: BetterFetchOption
+        ) => {
+          try {
+            const response = await $fetch(defaultEndpoints.claimSession, {
+              method: "POST",
+              body: JSON.stringify({
+                sessionCreationToken
+              }),
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Client-Type': 'web',
+                ...(config?.headers || {}),
+                ...(fetchOptions?.headers || {})
+              },
+              ...fetchOptions
+            });
+            
+            return {
+              data: response.data || null,
+              error: response.error || null
+            };
+          } catch (error) {
+            return {
+              data: null,
+              error: error instanceof Error ? error.message : "Session claim failed"
+            };
+          }
         }
-      };
-      
-      return actions;
-    }
+      }
+    })
   } satisfies BetterAuthClientPlugin;
 };

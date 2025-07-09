@@ -9,10 +9,18 @@
  */
 
 // Server-side plugin (Better Auth integration)
-export { qrAuth } from "./plugin/server.js";
+export { qrAuth, type QRAuthConfig } from "./plugin/server.js";
 
 // Shared types
-export type { QRToken, QRAuthConfig, QRAuthEvents, QRAuthEventHandler } from "./types/index.js";
+export type { 
+  QRToken, 
+  QRCodeData,
+  QRClientConfig,
+  QRAuthStartOptions,
+  APIResponse,
+  QRAuthEvents, 
+  QRAuthEventHandler 
+} from "./types/index.js";
 
 /**
  * @deprecated Use platform-specific imports instead:

@@ -23,12 +23,26 @@
       "import": "./dist/clients/web.js",
       "require": "./dist/clients/web.js",
       "default": "./dist/clients/web.js"
+    },
+    "./clients/native": {
+      "types": "./dist/clients/native.d.ts",
+      "import": "./dist/clients/native.js",
+      "require": "./dist/clients/native.js",
+      "default": "./dist/clients/native.js"
+    },
+    "./clients/web": {
+      "types": "./dist/clients/web.d.ts",
+      "import": "./dist/clients/web.js",
+      "require": "./dist/clients/web.js",
+      "default": "./dist/clients/web.js"
     }
   },
   "typesVersions": {
     "*": {
       "native": ["./dist/clients/native.d.ts"],
-      "web": ["./dist/clients/web.d.ts"]
+      "web": ["./dist/clients/web.d.ts"],
+      "clients/native": ["./dist/clients/native.d.ts"],
+      "clients/web": ["./dist/clients/web.d.ts"]
     }
   },
   "files": [
