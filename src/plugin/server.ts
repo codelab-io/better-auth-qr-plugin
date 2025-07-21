@@ -346,10 +346,20 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
             }
             
             // Set the session cookie using Better Auth's built-in utility
+            // Pass cookie overrides to ensure advanced configuration is respected
+            const advancedOptions = ctx.context.options?.advanced || {};
+            const defaultAttributes = advancedOptions.defaultCookieAttributes || {};
+            const useSecureCookies = advancedOptions.useSecureCookies;
+            
+            const cookieOverrides = {
+              ...defaultAttributes,
+              ...(useSecureCookies !== undefined && { secure: useSecureCookies })
+            };
+            
             await setSessionCookie(ctx, {
               session: sessionToken,
               user: user as any
-            });
+            }, undefined, cookieOverrides);
             
             // Clear the session creation token to prevent reuse
             await ctx.context.adapter.update({
