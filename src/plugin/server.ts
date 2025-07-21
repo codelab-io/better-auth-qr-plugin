@@ -1,6 +1,7 @@
 import type { BetterAuthPlugin } from "better-auth/plugins";
 import { createAuthEndpoint } from "better-auth/api";
 import { sessionMiddleware } from "better-auth/api";
+import { setSessionCookie } from "better-auth/cookies";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import QRCode from "qrcode";
@@ -344,28 +345,11 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
               return ctx.json({ error: "Failed to create session" }, { status: 500 });
             }
             
-            // Set the session cookie for the web client
-            const cookieName = "better-auth.session_token";
-            
-            // Determine if we're in a secure context
-            const isLocalhost = ctx.context.baseURL.includes('localhost') || 
-                               ctx.context.baseURL.includes('127.0.0.1') ||
-                               ctx.context.baseURL.startsWith('http://');
-            
-            const cookieOptions = {
-              httpOnly: true,
-              secure: !isLocalhost, // false for localhost, true for production
-              sameSite: isLocalhost ? "lax" as const : "strict" as const,
-              path: "/",
-              maxAge: 60 * 60 * 24 * 7, // 7 days
-            };
-            
-            await ctx.setSignedCookie(
-              cookieName,
-              sessionToken.token,
-              ctx.context.secret,
-              cookieOptions
-            );
+            // Set the session cookie using Better Auth's built-in utility
+            await setSessionCookie(ctx, {
+              session: sessionToken,
+              user: user as any
+            });
             
             // Clear the session creation token to prevent reuse
             await ctx.context.adapter.update({
