@@ -355,7 +355,7 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
               ...defaultAttributes,
               ...(useSecureCookies !== undefined && { secure: useSecureCookies })
             };
-            
+
             await setSessionCookie(ctx, {
               session: sessionToken,
               user: user as any
@@ -407,7 +407,7 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
     
     rateLimit: [
       {
-        pathMatcher: (path) => path.startsWith("/qr/"),
+        pathMatcher: (path) => path.startsWith("/qr/") && !path.endsWith("/status"),
         max: 10,
         window: 60, // 1 minute
       },
