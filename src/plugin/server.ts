@@ -104,12 +104,14 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
             token,
             serverUrl: ctx.context.baseURL,
           };
-          
+
+          // Generate QR code as data URL string
           const qrCodeDataUrl = await QRCode.toDataURL(JSON.stringify(qrDataObject), {
             width: parsedConfig.qrCodeSize,
             margin: 2,
           });
-          
+
+          // Ensure we're returning a proper JSON response with explicit headers
           return ctx.json({
             success: true,
             data: {
@@ -117,6 +119,10 @@ export const qrAuth = (config?: QRAuthConfigInput): BetterAuthPlugin => {
               qrCode: qrCodeDataUrl,
               expiresAt: expiresAt.toISOString(),
             },
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+            }
           });
         }
       ),
